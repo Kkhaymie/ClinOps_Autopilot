@@ -1,0 +1,30 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# Environment / config
+python-dotenv==1.0.1
+
+# Database
+supabase==2.10.0
+
+# AI classification
+mistralai==1.2.6
+groq==0.13.1
+ollama==0.4.5
+
+# Messaging channels
+africastalking==1.2.9
+python-telegram-bot==21.10
+
+# HTTP client
+httpx==0.27.2
+
+# Media processing
+cloudinary==1.41.0
+opencv-python==4.10.0.84
+moviepy==2.1.2
+
+# Scheduling (compliance clock)
+APScheduler==3.11.0
