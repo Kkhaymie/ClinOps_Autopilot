@@ -82,7 +82,14 @@ def check_proxy_reporter(phone: str) -> Optional[dict]:
 def save_adverse_event(ae_data: dict) -> Optional[dict]:
     try:
         result = supabase.table("adverse_events").insert(ae_data).execute()
-        return result.data[0] if result.data else None
+        saved = result.data[0] if result.data else None
+        if saved and saved.get("patient_id"):
+            try:
+                from intelligence.dropout_risk import recompute_dropout_risk
+                recompute_dropout_risk(saved["patient_id"])
+            except Exception:
+                logger.exception("dropout risk recompute failed after save_adverse_event")
+        return saved
     except Exception:
         logger.exception("save_adverse_event failed")
         return None
@@ -252,8 +259,113 @@ def mark_fragments_assembled(ids: List[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Safety signals
+# Unregistered senders (Fix #1)
 # ---------------------------------------------------------------------------
+
+def get_unregistered_reports(reviewed: Optional[bool] = None) -> List[dict]:
+    try:
+        query = supabase.table("unregistered_reports").select("*")
+        if reviewed is not None:
+            query = query.eq("reviewed", reviewed)
+        result = query.order("created_at", desc=True).execute()
+        return result.data or []
+    except Exception:
+        logger.exception("get_unregistered_reports failed")
+        return []
+
+
+def mark_unregistered_report_reviewed(
+    report_id: str, reviewed_by: str, notes: Optional[str] = None
+) -> Optional[dict]:
+    try:
+        result = (
+            supabase.table("unregistered_reports")
+            .update({
+                "reviewed": True,
+                "reviewed_by": reviewed_by,
+                "reviewed_at": datetime.now().isoformat(),
+                "resolution_notes": notes,
+            })
+            .eq("id", report_id)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception:
+        logger.exception("mark_unregistered_report_reviewed failed (id=%s)", report_id)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Low-priority batching digest (Scenario 2)
+# ---------------------------------------------------------------------------
+
+def get_low_priority_pending_summary() -> List[dict]:
+    """Groups still-open Mild/Routine reports by trial for the daily
+    batching digest (Scenario 2). One row per trial, with a count and the
+    patient codes involved, capped preview handled by the caller.
+    Self-limiting by design: once a report is approved/rejected it drops
+    out of this query automatically, so there's no separate 'already
+    digested' state to track."""
+    try:
+        result = (
+            supabase.table("adverse_events")
+            .select("id, trial_id, patients(patient_code), trials(trial_name)")
+            .eq("status", "PENDING_APPROVAL")
+            .eq("severity", "Mild")
+            .eq("urgency", "Routine")
+            .execute()
+        )
+        rows = result.data or []
+    except Exception:
+        logger.exception("get_low_priority_pending_summary failed")
+        return []
+
+    grouped: dict = {}
+    for r in rows:
+        tid = r.get("trial_id")
+        if tid not in grouped:
+            grouped[tid] = {
+                "trial_id": tid,
+                "trial_name": (r.get("trials") or {}).get("trial_name", "Unknown trial"),
+                "count": 0,
+                "patient_codes": [],
+            }
+        grouped[tid]["count"] += 1
+        code = (r.get("patients") or {}).get("patient_code")
+        if code:
+            grouped[tid]["patient_codes"].append(code)
+
+    return list(grouped.values())
+
+
+# ---------------------------------------------------------------------------
+# Internal response-time SLA (Fix #2), separate from the regulatory deadline
+# ---------------------------------------------------------------------------
+
+def get_pending_urgent_aes() -> List[dict]:
+    """Severe/Life-threatening reports still awaiting a coordinator decision,
+    regardless of category or whether a regulatory deadline was set."""
+    try:
+        result = (
+            supabase.table("adverse_events")
+            .select(
+                """
+                *,
+                patients(patient_code, full_name),
+                trials(trial_name, regulatory_body)
+                """
+            )
+            .eq("status", "PENDING_APPROVAL")
+            .in_("severity", ["Severe", "Life-threatening"])
+            .execute()
+        )
+        return result.data or []
+    except Exception:
+        logger.exception("get_pending_urgent_aes failed")
+        return []
+
+
+
 
 def save_safety_signal(data: dict) -> Optional[dict]:
     try:

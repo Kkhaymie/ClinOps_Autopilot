@@ -33,14 +33,30 @@ async def setup_telegram_bot():
     print("Telegram bot polling started")
 
 
+async def shutdown_telegram_bot():
+    """Stop polling and release the connection cleanly. Without this,
+    a reload or restart leaves the old polling loop dangling, and the
+    new process collides with it (409 Conflict on getUpdates)."""
+    global _app
+    if _app is None:
+        return
+    try:
+        if _app.updater and _app.updater.running:
+            await _app.updater.stop()
+        await _app.stop()
+        await _app.shutdown()
+        print("Telegram bot stopped cleanly")
+    except Exception as e:
+        print(f"Telegram shutdown error: {e}")
+    finally:
+        _app = None
+
+
 async def _handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid     = str(update.effective_user.id)
     patient = _get_patient(tid)
     if not patient:
-        await update.message.reply_text(
-            "We could not find your trial registration. "
-            "Please contact your site coordinator."
-        )
+        await _reject_unregistered(update, tid, update.message.text, "text")
         return
     await _pipeline(patient, update.message.text, "text", None, update)
 
@@ -49,6 +65,7 @@ async def _handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid     = str(update.effective_user.id)
     patient = _get_patient(tid)
     if not patient:
+        await _reject_unregistered(update, tid, "", "audio")
         return
     vf      = await ctx.bot.get_file(update.message.voice.file_id)
     vb      = await vf.download_as_bytearray()
@@ -70,25 +87,43 @@ async def _handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid     = str(update.effective_user.id)
     patient = _get_patient(tid)
     if not patient:
+        await _reject_unregistered(update, tid, update.message.caption or "", "image")
         return
     photo   = update.message.photo[-1]
     pf      = await ctx.bot.get_file(photo.file_id)
-    from processing.image_processor import analyse_symptom_image
-    an      = await analyse_symptom_image(pf.file_path)
-    content = (an.get("medical_description", "") + " " + (update.message.caption or "")).strip()
-    await _pipeline(patient, content, "image", pf.file_path, update)
+    from processing.unifier import unify_message
+    unified = await unify_message("image", update.message.caption or "", pf.file_path)
+    await _pipeline(patient, unified["content"], "image", pf.file_path, update)
 
 
 async def _handle_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid     = str(update.effective_user.id)
     patient = _get_patient(tid)
     if not patient:
+        await _reject_unregistered(update, tid, "", "video")
         return
     vf      = await ctx.bot.get_file(update.message.video.file_id)
-    from processing.video_processor import process_video_message
-    vr      = await process_video_message(vf.file_path)
-    content = vr.get("merged_clinical_summary", "")
-    await _pipeline(patient, content, "video", vf.file_path, update)
+    from processing.unifier import unify_message
+    unified = await unify_message("video", "", vf.file_path)
+    await _pipeline(patient, unified["content"], "video", vf.file_path, update)
+
+
+async def _reject_unregistered(update: Update, telegram_id: str, content: str, message_type: str):
+    """Fix #1: previously voice/photo/video from an unregistered Telegram
+    user just silently returned, no log, no reply, nothing. Text at least
+    got a reply but nothing was stored. Now every type gets logged,
+    escalated, and replied to consistently."""
+    from actions.unregistered_intake import handle_unregistered_sender
+    await handle_unregistered_sender(
+        channel="telegram",
+        raw_identifier=telegram_id,
+        message_content=content,
+        message_type=message_type,
+    )
+    await update.message.reply_text(
+        "We could not find your trial registration. "
+        "Please contact your site coordinator."
+    )
 
 
 def _get_patient(telegram_id: str):
@@ -108,9 +143,10 @@ async def _pipeline(patient, content, msg_type, media_url, update):
     from intelligence.deduplication import check_duplicate
     from intelligence.pattern_detector import check_safety_signal
 
+    from intelligence.tcm_herbs import detect_tcm_herbs
     trial     = patient.get("trials") or {}
     lp        = process_nigerian_text(content)
-    medicines = lp["traditional_medicines_detected"]
+    medicines = lp["traditional_medicines_detected"] + detect_tcm_herbs(content)
 
     cl = classify_adverse_event(
         clinical_summary=lp["processed_text"],
@@ -165,6 +201,8 @@ async def _pipeline(patient, content, msg_type, media_url, update):
         "status":              "PENDING_APPROVAL",
         "regulatory_deadline": dl.get("deadline"),
         "drug_batch":          trial.get("drug_batch_current"),
+        "emotional_distress_flag":  cl.get("emotional_distress_detected", False),
+        "emotional_distress_notes": cl.get("emotional_distress_notes") or None,
     })
 
     reply = cl.get(
@@ -176,6 +214,10 @@ async def _pipeline(patient, content, msg_type, media_url, update):
     if cl.get("severity") in ["Severe", "Life-threatening"]:
         from actions.notifications import notify_coordinator_urgent
         await notify_coordinator_urgent(patient, cl, trial)
+
+    if cl.get("emotional_distress_detected"):
+        from actions.notifications import notify_emotional_distress
+        await notify_emotional_distress(patient, cl, trial)
 
     log_communication({
         "patient_id":      patient["id"],

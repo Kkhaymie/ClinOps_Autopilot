@@ -71,6 +71,13 @@ async def _process_sms(from_number: str, body: str, msg_id: str):
             proxy_id = proxy.get("id")
         else:
             logger.info("Unknown SMS sender: %s", from_number)
+            from actions.unregistered_intake import handle_unregistered_sender
+            await handle_unregistered_sender(
+                channel="sms",
+                raw_identifier=from_number,
+                message_content=body,
+                message_type="text",
+            )
             await send_sms(
                 from_number,
                 "ClinOps: We could not find your registration. "
@@ -144,6 +151,8 @@ async def _process_sms(from_number: str, body: str, msg_id: str):
         "drug_batch": trial.get("drug_batch_current"),
         "is_proxy_report": is_proxy,
         "proxy_reporter_id": proxy_id,
+        "emotional_distress_flag": cl.get("emotional_distress_detected", False),
+        "emotional_distress_notes": cl.get("emotional_distress_notes") or None,
     })
 
     # ── SEND PATIENT ACKNOWLEDGMENT (kept short — SMS is billed per segment) ──

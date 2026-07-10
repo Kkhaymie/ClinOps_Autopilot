@@ -81,7 +81,9 @@ Return ONLY this JSON:
   "estimated_onset": "approximate time since symptoms started",
   "draft_patient_reply": "Reply message to send to patient",
   "coordinator_action": "What coordinator should do next",
-  "regulatory_deadline_trigger": true
+  "regulatory_deadline_trigger": true,
+  "emotional_distress_detected": false,
+  "emotional_distress_notes": "brief note on tone/content suggesting distress, empty string if none"
 }}"""
 
     try:
@@ -124,7 +126,9 @@ JSON:
   "estimated_onset": "Unknown",
   "draft_patient_reply": "Thank you. We have received your report.",
   "coordinator_action": "Review and approve",
-  "regulatory_deadline_trigger": true
+  "regulatory_deadline_trigger": true,
+  "emotional_distress_detected": false,
+  "emotional_distress_notes": ""
 }}"""
 
         response = ollama.chat(
@@ -182,6 +186,8 @@ def _fallback(error: str) -> dict:
             "Please review original message."
         ),
         "regulatory_deadline_trigger": True,
+        "emotional_distress_detected": False,
+        "emotional_distress_notes": "",
         "model_used": "fallback",
         "error": error,
     }
@@ -226,6 +232,10 @@ _REGULATORY_RULES = {
     },
 }
 
+# Categories that were never a reportable adverse event in the first
+# place, a regulatory clock shouldn't start for these. Fix #3.
+_NON_REPORTABLE_CATEGORIES = {"Non-reportable", "Inquiry"}
+
 
 def calculate_deadline(
     severity: str,
@@ -233,6 +243,14 @@ def calculate_deadline(
     category: str,
     base_time: Optional[datetime] = None,
 ) -> dict:
+    if category in _NON_REPORTABLE_CATEGORIES:
+        return {
+            "regulatory_body": None,
+            "deadline": None,
+            "hours_total": None,
+            "is_urgent": False,
+        }
+
     if not base_time:
         base_time = datetime.now()
 

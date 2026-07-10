@@ -164,7 +164,14 @@ async def _process_message(message: dict, metadata: dict):
             is_proxy = True
             proxy_id = proxy.get("id")
         else:
-            # Unknown number — send helpful response
+            # Unknown number — log it instead of discarding, then reply
+            from actions.unregistered_intake import handle_unregistered_sender
+            await handle_unregistered_sender(
+                channel="whatsapp",
+                raw_identifier=normalised_number,
+                message_content=message.get("text", {}).get("body", "") if msg_type == "text" else body,
+                message_type=msg_type,
+            )
             await send_whatsapp_message(
                 from_number,
                 "Hello! Thank you for your message. We could not find "
@@ -195,40 +202,29 @@ async def _process_message(message: dict, metadata: dict):
         mark_fragments_assembled([f["id"] for f in frags])
 
     # ── PROCESS MEDIA ─────────────────────────────────────────────
-    content          = body
+    from processing.unifier import unify_message
+
     stored_media_url = None
-    transcript       = None
-    auth_header      = f"Bearer {ACCESS_TOKEN}"
+    auth_header = f"Bearer {ACCESS_TOKEN}"
 
-    if msg_type == "audio" and media_url:
-        from processing.audio_processor import transcribe_voice_note
-        tr         = await transcribe_voice_note(media_url, auth_header)
-        transcript = tr.get("transcript", "")
-        content    = transcript or body
-        stored_media_url = await _store_to_cloudinary(
-            media_url, "video", msg_id, "voice_notes", auth_header
-        )
+    unified = await unify_message(msg_type, body, media_url, auth_header)
+    content = unified["content"]
+    transcript = unified["transcript"]
 
-    elif msg_type == "image" and media_url:
-        from processing.image_processor import analyse_symptom_image
-        an      = await analyse_symptom_image(media_url, auth_header)
-        content = (an.get("medical_description", "") + " " + body).strip()
+    if media_url:
+        # video upload for audio because Cloudinary's "video" resource type
+        # is what actually accepts audio containers here, same as before.
+        folder = {"audio": "voice_notes", "image": "images", "video": "videos"}.get(msg_type, "media")
+        resource_type = "image" if msg_type == "image" else "video"
         stored_media_url = await _store_to_cloudinary(
-            media_url, "image", msg_id, "images", auth_header
-        )
-
-    elif msg_type == "video" and media_url:
-        from processing.video_processor import process_video_message
-        vr      = await process_video_message(media_url, auth_header)
-        content = vr.get("merged_clinical_summary", body)
-        stored_media_url = await _store_to_cloudinary(
-            media_url, "video", msg_id, "videos", auth_header
+            media_url, resource_type, msg_id, folder, auth_header
         )
 
     # ── LANGUAGE PROCESSING ───────────────────────────────────────
     from intelligence.nigerian_language import process_nigerian_text
     lp        = process_nigerian_text(content)
-    medicines = lp["traditional_medicines_detected"]
+    from intelligence.tcm_herbs import detect_tcm_herbs
+    medicines = lp["traditional_medicines_detected"] + detect_tcm_herbs(content)
 
     # ── AI CLASSIFICATION ─────────────────────────────────────────
     from intelligence.agent_core import classify_adverse_event, calculate_deadline
@@ -297,6 +293,8 @@ async def _process_message(message: dict, metadata: dict):
         "drug_batch":          trial.get("drug_batch_current"),
         "is_proxy_report":     is_proxy,
         "proxy_reporter_id":   proxy_id,
+        "emotional_distress_flag":  cl.get("emotional_distress_detected", False),
+        "emotional_distress_notes": cl.get("emotional_distress_notes") or None,
     })
 
     # ── SEND PATIENT ACKNOWLEDGMENT ──────────────────────────────
@@ -311,6 +309,10 @@ async def _process_message(message: dict, metadata: dict):
     if cl.get("severity") in ["Severe", "Life-threatening"]:
         from actions.notifications import notify_coordinator_urgent
         await notify_coordinator_urgent(patient, cl, trial)
+
+    if cl.get("emotional_distress_detected"):
+        from actions.notifications import notify_emotional_distress
+        await notify_emotional_distress(patient, cl, trial)
 
     # ── LOG COMMUNICATION ─────────────────────────────────────────
     log_communication({

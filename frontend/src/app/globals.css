@@ -1,0 +1,14 @@
+/* frontend/src/app/globals.css */
+@import "tailwindcss";
+
+@theme {
+  --color-gold: #F5C518;
+  --color-green: #8BC34A;
+  --color-purple: #9B8EC4;
+  --color-navy: #0A0F2C;
+}
+
+body {
+  background-color: #F8FAFC;
+  color: #0F172A;
+}
