@@ -2,15 +2,15 @@
 """
 Duplicate adverse-event report detection.
 
-Patients often report the same event twice — e.g. once by WhatsApp text and
-again by voice note a few minutes later, or a proxy reporter re-sends after
-not hearing back. This module checks whether a newly classified report looks
-like a duplicate of something the same patient already submitted recently,
-so we don't create two AE records (and don't message the patient twice).
+Patients often report the same event twice — once by WhatsApp text, again
+by voice note a few minutes later, or a proxy reporter re-sends after not
+hearing back. This checks whether a newly classified report looks like a
+duplicate of something the same patient already submitted recently, so we
+don't create two AE records or message the patient twice.
 
-Called from: channels/whatsapp_cloud.py, channels/email_receiver.py,
-channels/telegram_receiver.py — always *after* AI classification, since it
-compares on the classifier's normalized `symptoms` list.
+Called from: channels/whatsapp_cloud.py, channels/sms_africas_talking.py,
+channels/email_receiver.py, channels/telegram_receiver.py — always *after*
+AI classification, since it compares on the classifier's symptom list.
 """
 
 import logging
@@ -22,65 +22,52 @@ from database.client import supabase
 logger = logging.getLogger(__name__)
 
 
-def _normalize_symptom(s: str) -> str:
-    return s.strip().lower()
-
-
-def _symptom_overlap(a: List[str], b: List[str]) -> float:
-    """Jaccard-style overlap between two symptom lists, 0.0-1.0."""
-    set_a = {_normalize_symptom(s) for s in (a or [])}
-    set_b = {_normalize_symptom(s) for s in (b or [])}
-    if not set_a or not set_b:
-        return 0.0
-    intersection = set_a & set_b
-    union = set_a | set_b
-    return len(intersection) / len(union) if union else 0.0
-
-
 def check_duplicate(
     patient_id: str,
     symptoms: List[str],
     hours_window: int = 24,
-    overlap_threshold: float = 0.5,
-) -> Tuple[bool, Optional[dict]]:
+) -> Tuple[bool, Optional[str]]:
     """
-    Check whether this patient has already reported a very similar set of
-    symptoms within the recent window.
-
-    Args:
-        patient_id: patient's UUID.
-        symptoms: normalized symptom list from classify_adverse_event().
-        hours_window: how far back to look for prior reports.
-        overlap_threshold: minimum symptom-set similarity (Jaccard) to
-            consider two reports duplicates of each other.
+    Check if the same patient already reported an overlapping set of
+    symptoms — possibly on a different channel — within the time window.
 
     Returns:
-        (is_duplicate, matching_record_or_None)
+        (is_duplicate, original_ae_id) — original_ae_id is None if no
+        duplicate was found.
     """
     try:
         cutoff = (datetime.now() - timedelta(hours=hours_window)).isoformat()
-        result = (
+        r = (
             supabase.table("adverse_events")
-            .select("id, symptoms, created_at, status")
+            .select("id, symptoms")
             .eq("patient_id", patient_id)
             .gte("created_at", cutoff)
-            .order("created_at", desc=True)
             .execute()
         )
-        recent_events = result.data or []
+        if not r.data:
+            return False, None
+
+        new_set = {s.lower() for s in symptoms if s}
+        if not new_set:
+            return False, None
+
+        for ae in r.data:
+            existing = ae.get("symptoms", [])
+            if not isinstance(existing, list):
+                continue
+            existing_set = {s.lower() for s in existing if s}
+            if not existing_set:
+                continue
+
+            overlap = len(new_set & existing_set)
+            ratio = overlap / min(len(new_set), len(existing_set))
+            if ratio >= 0.5:
+                return True, ae["id"]
+
+        return False, None
+
     except Exception:
         logger.exception("check_duplicate failed (patient_id=%s)", patient_id)
         # Fail open: if the dedup check itself errors, don't block the
-        # report from being saved — a false negative here just means a
-        # possible duplicate record, which a coordinator can merge later.
+        # report from being saved.
         return False, None
-
-    if not symptoms:
-        return False, None
-
-    for event in recent_events:
-        overlap = _symptom_overlap(symptoms, event.get("symptoms") or [])
-        if overlap >= overlap_threshold:
-            return True, event
-
-    return False, None

@@ -256,6 +256,9 @@ async def upload_letter(
                 new_values={"channel": "physical_mail", "severity": cl.get("severity")},
                 ai_model="pixtral-large-latest", ai_confidence=ocr.get("overall_confidence", 0),
             )
+            if cl.get("emotional_distress_detected"):
+                from actions.notifications import notify_emotional_distress
+                await notify_emotional_distress(patient, cl, trial)
 
         return {
             "success": True,

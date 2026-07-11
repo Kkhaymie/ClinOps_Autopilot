@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   Inbox, CheckSquare, Clock, FolderOpen,
-  AlertTriangle, BarChart2, Mail, Microscope
+  AlertTriangle, BarChart2, Mail, Microscope, Users
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { StaffRole } from '@/lib/auth-context'
@@ -18,6 +18,7 @@ const NAV: { href: string; icon: any; label: string; roles: StaffRole[] }[] = [
   { href: '/signals',    icon: AlertTriangle, label: 'Safety Signals',    roles: ['admin', 'coordinator', 'pi', 'sponsor'] },
   { href: '/analytics',  icon: BarChart2,     label: 'Analytics',         roles: ['admin', 'coordinator', 'pi', 'sponsor'] },
   { href: '/letters',    icon: Mail,          label: 'Physical Letters',  roles: ['admin', 'coordinator', 'site_staff'] },
+  { href: '/staff',      icon: Users,         label: 'Staff',             roles: ['admin'] },
 ]
 
 export function Sidebar({ role }: { role?: StaffRole }) {

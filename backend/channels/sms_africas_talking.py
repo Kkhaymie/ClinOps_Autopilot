@@ -89,7 +89,8 @@ async def _process_sms(from_number: str, body: str, msg_id: str):
 
     # ── LANGUAGE PROCESSING ────────────────────────────────────────
     lp = process_nigerian_text(body)
-    medicines = lp["traditional_medicines_detected"]
+    from intelligence.tcm_herbs import detect_tcm_herbs
+    medicines = lp["traditional_medicines_detected"] + detect_tcm_herbs(body)
 
     # ── AI CLASSIFICATION ───────────────────────────────────────────
     cl = classify_adverse_event(
@@ -166,6 +167,10 @@ async def _process_sms(from_number: str, body: str, msg_id: str):
     if cl.get("severity") in ["Severe", "Life-threatening"]:
         from actions.notifications import notify_coordinator_urgent
         await notify_coordinator_urgent(patient, cl, trial)
+
+    if cl.get("emotional_distress_detected"):
+        from actions.notifications import notify_emotional_distress
+        await notify_emotional_distress(patient, cl, trial)
 
     # ── LOG COMMUNICATION ──────────────────────────────────────────────
     log_communication({
