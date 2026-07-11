@@ -7,7 +7,10 @@ This runs *before* the message reaches the AI classifier (agent_core). It:
      Yoruba, Igbo, Hausa, or plain English) using keyword matching — a fast,
      dependency-free heuristic. The LLM prompt in agent_core already
      understands these languages directly, so this is a hint, not a
-     translation step.
+     translation step. Also flags Arabic-script text (see
+     _contains_arabic_script), likely Hausa written in Ajami script, common
+     in Northern Nigeria, so it gets routed to the AI classifier with the
+     right expectation rather than silently misread as plain Arabic.
   2. Scans for mentions of common Nigerian traditional/herbal remedies
      (Agbo, Zobo, Nzu, Akanwu, etc.), since these can interact with trial
      drugs and must be flagged for the coordinator.
@@ -84,12 +87,51 @@ _TRADITIONAL_MEDICINES: List[TraditionalMedicine] = [
 ]
 
 
+_ARABIC_SCRIPT_PATTERN = re.compile(
+    r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]"
+)
+
+
+def _contains_arabic_script(text: str, threshold: float = 0.15) -> bool:
+    """
+    True if a meaningful fraction of the text is Arabic-script characters.
+
+    This is a Unicode code-point range check, deterministic, not a
+    vocabulary guess, so unlike keyword matching it doesn't depend on
+    having a verified word list. It flags Arabic-script text generally;
+    it does NOT distinguish Ajami (Hausa written in Arabic script) from
+    actual Arabic, that distinction needs linguistic judgement this
+    function isn't making. In this system's context (a Nigerian trial
+    site), Arabic-script SMS/WhatsApp text is far more likely to be
+    Ajami-Hausa than Arabic proper, so callers should treat it as a
+    "probably Ajami" signal and let the AI classifier, which has much
+    broader multilingual training than a keyword list, make the actual
+    read.
+    """
+    if not text:
+        return False
+    arabic_chars = len(_ARABIC_SCRIPT_PATTERN.findall(text))
+    letters = len(re.findall(r"\w", text, re.UNICODE))
+    if letters == 0:
+        return False
+    return (arabic_chars / letters) >= threshold
+
+
 def _detect_script(text: str) -> tuple:
-    """Return (best_guess_language, matched_signal_phrases)."""
+    """Return (best_guess_language, matched_signal_phrases).
+
+    Uses word-boundary matching, not plain substring matching, a short
+    marker like "una" shouldn't match inside an unrelated word. Checks
+    for Arabic script first, since keyword matching against the Latin-
+    script marker lists wouldn't apply to it anyway.
+    """
+    if _contains_arabic_script(text):
+        return "Arabic script (Ajami-Hausa likely)", ["arabic-script-detected"]
+
     lowered = text.lower()
     matches_by_lang = {}
     for lang, markers in _LANGUAGE_MARKERS.items():
-        hits = [m for m in markers if m in lowered]
+        hits = [m for m in markers if re.search(r"\b" + re.escape(m) + r"\b", lowered)]
         if hits:
             matches_by_lang[lang] = hits
 
