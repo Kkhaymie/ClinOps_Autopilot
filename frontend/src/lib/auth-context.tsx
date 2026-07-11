@@ -1,6 +1,7 @@
 // frontend/src/lib/auth-context.tsx
 'use client'
 import { createContext, useContext, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 
@@ -24,6 +25,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter()
   const [session, setSession] = useState<Session | null>(null)
   const [staff, setStaff] = useState<StaffProfile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -50,8 +52,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     })
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
+      // Supabase drops recovery links on the Site URL root with the
+      // token in the URL hash, not on a specific path, so we can't rely
+      // on the link itself routing here — catch it globally instead.
+      if (event === 'PASSWORD_RECOVERY') {
+        router.replace('/reset-password')
+        return
+      }
       if (session?.user) {
         loadStaffProfile(session.user.id)
       } else {
@@ -60,7 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })
 
     return () => listener.subscription.unsubscribe()
-  }, [])
+  }, [router])
 
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password })

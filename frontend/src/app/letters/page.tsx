@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { PageLayout } from '@/components/PageLayout'
 import { Mail, Upload, CheckCircle } from 'lucide-react'
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API = process.env.NEXT_PUBLIC_API_URL || 'https://clinops-autopilot.onrender.com'
 
 export default function LettersPage() {
   const [patientCode, setPatientCode] = useState('')

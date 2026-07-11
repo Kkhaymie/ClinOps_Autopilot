@@ -1,7 +1,7 @@
 // frontend/src/lib/api.ts
 import { supabase } from './supabase'
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const BASE = process.env.NEXT_PUBLIC_API_URL || 'https://clinops-autopilot.onrender.com'
 
 async function req(path: string, options: RequestInit = {}) {
   const { data: { session } } = await supabase.auth.getSession()
