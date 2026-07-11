@@ -42,22 +42,22 @@ export function PageLayout({
               <p className="text-sm text-gray-500 mt-1">{subtitle}</p>
             )}
           </div>
-          {staff && (
-            <div className="flex items-center gap-3 text-sm">
+          <div className="flex items-center gap-3 text-sm">
+            {staff && (
               <div className="text-right">
                 <p className="font-medium text-gray-900">{staff.full_name}</p>
                 <p className="text-gray-400 text-xs capitalize">
                   {staff.role.replace('_', ' ')}
                 </p>
               </div>
-              <button
-                onClick={signOut}
-                className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5"
-              >
-                Sign out
-              </button>
-            </div>
-          )}
+            )}
+            <button
+              onClick={signOut}
+              className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
         {children}
       </main>
