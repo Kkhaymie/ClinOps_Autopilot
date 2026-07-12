@@ -182,6 +182,18 @@ async def email_inbound(payload: dict):
         "emotional_distress_notes": cl.get("emotional_distress_notes") or None,
     })
 
+    # Fixed acknowledgment, same reasoning as WhatsApp/Telegram: fires
+    # before coordinator review. cl is already computed by this point, so
+    # this can be tiered by severity without sending unreviewed AI text.
+    if from_email:
+        from actions.notifications import _send_email
+        from actions.patient_reply import build_acknowledgment_message
+        await _send_email(
+            to=from_email,
+            subject="We have received your report",
+            body=build_acknowledgment_message(cl.get("severity")),
+        )
+
     if cl.get("severity") in ["Severe", "Life-threatening"]:
         from actions.notifications import notify_coordinator_urgent
         await notify_coordinator_urgent(patient, cl, trial)

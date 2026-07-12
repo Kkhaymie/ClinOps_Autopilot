@@ -157,10 +157,17 @@ async def _process_sms(from_number: str, body: str, msg_id: str):
     })
 
     # ── SEND PATIENT ACKNOWLEDGMENT (kept short — SMS is billed per segment) ──
+    _sms_ack = {
+        "Severe": "ClinOps: URGENT, your care team is being notified now. If this is an emergency, seek care immediately. Do not stop medication without doctor advice.",
+        "Life-threatening": "ClinOps: URGENT, your care team is being notified now. If this is an emergency, seek care immediately. Do not stop medication without doctor advice.",
+        "Moderate": "ClinOps: Report received, reviewed promptly. If severe, seek care and contact your coordinator. Do not stop medication without doctor advice.",
+    }
     await send_sms(
         from_number,
-        "ClinOps: Report received. Our nurse will contact you. "
-        "Do NOT stop medication without doctor advice."
+        _sms_ack.get(
+            cl.get("severity"),
+            "ClinOps: Report received, under review. If emergency or severe, seek care now and contact your coordinator. Do not stop medication without doctor advice.",
+        )
     )
 
     # ── URGENT COORDINATOR NOTIFICATION ───────────────────────────────

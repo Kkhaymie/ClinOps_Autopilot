@@ -256,6 +256,20 @@ async def upload_letter(
                 new_values={"channel": "physical_mail", "severity": cl.get("severity")},
                 ai_model="pixtral-large-latest", ai_confidence=ocr.get("overall_confidence", 0),
             )
+            # A physical letter has no digital reply channel of its own.
+            # Best effort: use whatever contact info is on the patient's
+            # record. send_reply_on_original_channel already handles the
+            # whatsapp-then-sms fallback and logs a warning if neither
+            # exists, this channel sent no acknowledgment at all before.
+            # Same tiered builder as every other channel: the urgent-tier
+            # claim (care team notified now) is equally true here, that
+            # alert fires synchronously as part of this same upload.
+            from actions.patient_reply import send_reply_on_original_channel, build_acknowledgment_message
+            await send_reply_on_original_channel(
+                patient,
+                build_acknowledgment_message(cl.get("severity")),
+                force_channel="physical_mail",
+            )
             if cl.get("emotional_distress_detected"):
                 from actions.notifications import notify_emotional_distress
                 await notify_emotional_distress(patient, cl, trial)

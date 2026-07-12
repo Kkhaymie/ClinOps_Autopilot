@@ -241,6 +241,14 @@ async def _process_voice_report(caller_number: str, recording_url: str):
         from actions.notifications import notify_emotional_distress
         await notify_emotional_distress(patient, cl, trial)
 
+    # The spoken closing message during the call couldn't be severity-
+    # tiered, classification wasn't done yet, the call was already over.
+    # This follow-up SMS closes that gap once it is.
+    from actions.patient_reply import send_reply_on_original_channel, build_acknowledgment_message
+    await send_reply_on_original_channel(
+        patient, build_acknowledgment_message(cl.get("severity")), force_channel="sms"
+    )
+
     log_communication({
         "patient_id": patient["id"],
         "ae_id": saved["id"] if saved else None,

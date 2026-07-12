@@ -298,12 +298,14 @@ async def _process_message(message: dict, metadata: dict):
     })
 
     # ── SEND PATIENT ACKNOWLEDGMENT ──────────────────────────────
-    reply = cl.get(
-        "draft_patient_reply",
-        "Thank you for your message. We have received your report "
-        "and our medical team will follow up with you shortly."
-    )
-    await send_whatsapp_message(from_number, reply)
+    # Tiered by severity, not the AI's draft_patient_reply: this fires
+    # before any coordinator has reviewed the classification, but cl is
+    # already computed, so it's safe to differentiate by severity while
+    # still not sending unreviewed AI-drafted text. The coordinator-
+    # reviewed reply goes out separately after approval, via
+    # notify_after_approval.
+    from actions.patient_reply import build_acknowledgment_message
+    await send_whatsapp_message(from_number, build_acknowledgment_message(cl.get("severity")))
 
     # ── URGENT COORDINATOR NOTIFICATION ──────────────────────────
     if cl.get("severity") in ["Severe", "Life-threatening"]:

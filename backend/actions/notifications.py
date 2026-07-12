@@ -19,6 +19,28 @@ from actions.escalation_engine import run_escalation
 
 load_dotenv()
 
+_RECOMMENDATION_LABELS = {
+    "seek_immediate_care": "Seek immediate care",
+    "rest_and_monitor": "Rest and monitor",
+    "avoid_food": "Avoid food/substance",
+    "avoid_herbal_medicine": "Avoid herbal medicine",
+    "discuss_with_physician": "Discuss with physician",
+}
+
+
+def _format_recommendations(recommendations) -> str:
+    """Formats the AI's structured patient_recommendations into a short
+    line for coordinator/sponsor messages. Caps at 3 to keep alerts
+    scannable; the full list is always visible on the dashboard."""
+    if not recommendations:
+        return ""
+    parts = []
+    for r in recommendations[:3]:
+        label = _RECOMMENDATION_LABELS.get(r.get("type"), r.get("type", "Note"))
+        detail = r.get("detail", "")
+        parts.append(f"{label}: {detail}" if detail else label)
+    return "AI-suggested next steps: " + " | ".join(parts)
+
 
 async def notify_coordinator_urgent(patient: dict, classification: dict, trial: dict):
     """
@@ -33,13 +55,15 @@ async def notify_coordinator_urgent(patient: dict, classification: dict, trial: 
     symptoms = ", ".join(classification.get("symptoms", []))
     trial_name = trial.get("trial_name", "Unknown")
     category = classification.get("category", "AE")
+    recs = _format_recommendations(classification.get("patient_recommendations", []))
 
     message = (
         f"⚠️ URGENT AE ALERT — {severity.upper()}\n"
         f"Patient: {patient_code}\n"
         f"Trial: {trial_name}\n"
         f"Symptoms: {symptoms}\n"
-        f"Action required: Log in to ClinOps dashboard immediately."
+        + (f"{recs}\n" if recs else "")
+        + f"Action required: Log in to ClinOps dashboard immediately."
     )
 
     await run_escalation(
@@ -97,6 +121,9 @@ async def notify_after_approval(ae: dict, patient: dict, trial: dict):
     patient_code = patient.get("patient_code", "Unknown")
     symptoms = ", ".join(ae.get("symptoms", []))
     category = ae.get("category", "AE")
+    recs = _format_recommendations(
+        (ae.get("draft_report") or {}).get("patient_recommendations", [])
+    )
 
     # 1. Patient confirmation reply
     reply = ae.get("draft_patient_reply") or (
@@ -104,7 +131,7 @@ async def notify_after_approval(ae: dict, patient: dict, trial: dict):
         "We will follow up with you within 24 hours."
     )
     from actions.patient_reply import send_reply_on_original_channel
-    await send_reply_on_original_channel(patient, reply)
+    await send_reply_on_original_channel(patient, reply, force_channel=ae.get("channel"))
 
     # 2. Staff escalation per configured rules
     message = (
@@ -114,7 +141,8 @@ async def notify_after_approval(ae: dict, patient: dict, trial: dict):
         f"Drug: {trial.get('drug_name')}\n"
         f"Batch: {ae.get('drug_batch', 'Unknown')}\n"
         f"Symptoms: {symptoms}\n"
-        f"Language of report: {ae.get('language_detected')}\n"
+        + (f"{recs}\n" if recs else "")
+        + f"Language of report: {ae.get('language_detected')}\n"
         f"Traditional medicine flag: {ae.get('trad_medicine_flag')}\n"
         f"Regulatory body: {trial.get('regulatory_body')}\n\n"
         f"Please log in to ClinOps Autopilot to view full report."

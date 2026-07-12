@@ -88,8 +88,21 @@ Return ONLY this JSON:
   "coordinator_action": "What coordinator should do next",
   "regulatory_deadline_trigger": true,
   "emotional_distress_detected": false,
-  "emotional_distress_notes": "brief note on tone/content suggesting distress, empty string if none"
-}}"""
+  "emotional_distress_notes": "brief note on tone/content suggesting distress, empty string if none",
+  "patient_recommendations": [
+    {{"type": "seek_immediate_care|rest_and_monitor|avoid_food|avoid_herbal_medicine|discuss_with_physician", "detail": "specific, brief, one sentence"}}
+  ]
+}}
+
+CRITICAL RULE for patient_recommendations: never generate a recommendation
+telling the patient to stop, discontinue, delay, reduce, or change the
+timing of their study medication dose. That decision belongs to a
+physician reviewing the case, not to you. Any concern involving the study
+drug itself, including suspected interactions or dosing timing, must use
+type "discuss_with_physician" describing the concern for a clinician to
+decide, never a direct instruction to change how they take it.
+avoid_food and avoid_herbal_medicine are for things OTHER than the study
+drug (diet, traditional remedies), those are safe to name directly."""
 
     try:
         response = mistral.chat.complete(
@@ -133,8 +146,12 @@ JSON:
   "coordinator_action": "Review and approve",
   "regulatory_deadline_trigger": true,
   "emotional_distress_detected": false,
-  "emotional_distress_notes": ""
-}}"""
+  "emotional_distress_notes": "",
+  "patient_recommendations": []
+}}
+
+Never put "stop/reduce/delay the study drug" in patient_recommendations,
+use discuss_with_physician for anything about the study drug itself."""
 
         response = ollama.chat(
             model="llama3.2",
@@ -193,6 +210,7 @@ def _fallback(error: str) -> dict:
         "regulatory_deadline_trigger": True,
         "emotional_distress_detected": False,
         "emotional_distress_notes": "",
+        "patient_recommendations": [],
         "model_used": "fallback",
         "error": error,
     }

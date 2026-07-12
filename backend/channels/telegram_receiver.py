@@ -33,25 +33,6 @@ async def setup_telegram_bot():
     print("Telegram bot polling started")
 
 
-async def shutdown_telegram_bot():
-    """Stop polling and release the connection cleanly. Without this,
-    a reload or restart leaves the old polling loop dangling, and the
-    new process collides with it (409 Conflict on getUpdates)."""
-    global _app
-    if _app is None:
-        return
-    try:
-        if _app.updater and _app.updater.running:
-            await _app.updater.stop()
-        await _app.stop()
-        await _app.shutdown()
-        print("Telegram bot stopped cleanly")
-    except Exception as e:
-        print(f"Telegram shutdown error: {e}")
-    finally:
-        _app = None
-
-
 async def _handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid     = str(update.effective_user.id)
     patient = _get_patient(tid)
@@ -205,11 +186,11 @@ async def _pipeline(patient, content, msg_type, media_url, update):
         "emotional_distress_notes": cl.get("emotional_distress_notes") or None,
     })
 
-    reply = cl.get(
-        "draft_patient_reply",
-        "Your report has been received. Our team will follow up. Thank you."
-    )
-    await update.message.reply_text(reply)
+    # Tiered by severity, same reasoning as whatsapp_cloud.py: cl is
+    # already computed by this point, so this can differentiate without
+    # sending unreviewed AI-drafted text.
+    from actions.patient_reply import build_acknowledgment_message
+    await update.message.reply_text(build_acknowledgment_message(cl.get("severity")))
 
     if cl.get("severity") in ["Severe", "Life-threatening"]:
         from actions.notifications import notify_coordinator_urgent
